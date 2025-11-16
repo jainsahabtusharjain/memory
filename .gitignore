@@ -1,0 +1,48 @@
+# Docker Images - Too large for git
+saved-docker-images/
+*.tar
+*.tar.gz
+*.zip
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+history/*.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.venv
+venv/
+ENV/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
