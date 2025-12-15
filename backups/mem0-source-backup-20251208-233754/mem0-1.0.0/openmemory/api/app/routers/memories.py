@@ -515,6 +515,7 @@ async def get_memory_access_log(
 class UpdateMemoryRequest(BaseModel):
     memory_content: str
     user_id: str
+    memory_id: Optional[str] = None  # Optional - UI sends it but we use URL param
 
 # Update a memory
 @router.put("/{memory_id}")
@@ -614,34 +615,16 @@ async def filter_memories(
         # Default sorting
         query = query.order_by(Memory.created_at.desc())
 
-    # Add eager loading for app and categories
+    # Add eager loading for categories and make the query distinct
     query = query.options(
-        joinedload(Memory.app),
         joinedload(Memory.categories)
-    )
-    
-    # CRITICAL FIX: SQLite doesn't support DISTINCT ON - fetch all and deduplicate
-    # The .distinct(Memory.id) was silently failing, causing empty results
-    all_memories = query.all()
-    
-    # Deduplicate by memory ID (needed because category joins create duplicates)
-    seen_ids = set()
-    unique_memories = []
-    for memory in all_memories:
-        if memory.id not in seen_ids:
-            seen_ids.add(memory.id)
-            unique_memories.append(memory)
-    
-    # Apply pagination manually
-    total = len(unique_memories)
-    page = request.page
-    size = request.size
-    start = (page - 1) * size
-    end = start + size
-    paginated_items = unique_memories[start:end]
-    
-    # Transform to MemoryResponse
-    transformed_items = [
+    ).distinct(Memory.id)
+
+    # Use fastapi-pagination's paginate function
+    return sqlalchemy_paginate(
+        query,
+        Params(page=request.page, size=request.size),
+        transformer=lambda items: [
             MemoryResponse(
                 id=memory.id,
                 content=memory.content,
@@ -652,16 +635,8 @@ async def filter_memories(
                 categories=[category.name for category in memory.categories],
                 metadata_=memory.metadata_
             )
-        for memory in paginated_items
+            for memory in items
         ]
-    
-    # Return Page object compatible with fastapi-pagination
-    return Page(
-        items=transformed_items,
-        total=total,
-        page=page,
-        size=size,
-        pages=(total + size - 1) // size if size > 0 else 0
     )
 
 
