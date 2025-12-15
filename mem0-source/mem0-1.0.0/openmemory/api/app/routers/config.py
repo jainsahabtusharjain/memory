@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from app.database import get_db
 from app.models import Config as ConfigModel
-from app.utils.memory import reset_memory_client
+from app.utils.memory import reset_memory_client, _ensure_embedding_dims, _ensure_embedding_dims
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ class EmbedderConfig(BaseModel):
     model: str = Field(..., description="Embedder model name")
     api_key: Optional[str] = Field(None, description="API key or 'env:API_KEY' to use environment variable")
     ollama_base_url: Optional[str] = Field(None, description="Base URL for Ollama server (e.g., http://host.docker.internal:11434)")
+    embedding_dims: Optional[int] = Field(None, description="Embedding dimensions (required for Gemini: 1024, OpenAI: 1536)")
 
 class EmbedderProvider(BaseModel):
     provider: str = Field(..., description="Embedder provider name")
@@ -181,6 +182,11 @@ def get_config_from_db(db: Session, key: str = "main"):
                 # Ensure provider is set
                 if config_value["mem0"]["embedder"].get("provider") is None:
                     config_value["mem0"]["embedder"]["provider"] = default_config["mem0"]["embedder"]["provider"]
+                
+                # CRITICAL: Use shared helper function to ensure embedding_dims is set
+                # This replaces duplicate logic with single source of truth
+                # The helper handles: missing dims, different providers/models, vector store sync
+                config_value = _ensure_embedding_dims(config_value)
     
     # Save the updated config back to database if it was modified
     # Only save if we actually added missing fields, not if user's config is complete

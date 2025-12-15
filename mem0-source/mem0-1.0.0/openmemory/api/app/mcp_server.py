@@ -82,6 +82,8 @@ async def add_memories(text: str) -> str:
             if not app.is_active:
                 return f"Error: App {app.name} is currently paused on OpenMemory. Cannot create new memories."
 
+            # Add memory - entity extraction is required for graph store
+            # If this fails, the entire operation fails (no fallback)
             response = memory_client.add(text,
                                          user_id=uid,
                                          metadata={

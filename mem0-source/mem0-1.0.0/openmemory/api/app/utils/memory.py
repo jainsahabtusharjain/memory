@@ -47,6 +47,114 @@ def _get_config_hash(config_dict):
     return hashlib.md5(config_str.encode()).hexdigest()
 
 
+def _ensure_embedding_dims(config: dict) -> dict:
+    """
+    Ensure embedding_dims is set correctly for embedder and sync with vector store.
+    
+    This function handles all edge cases:
+    - Missing embedding_dims in config
+    - Different embedder providers (Gemini, OpenAI, Ollama, Cohere, HuggingFace)
+    - Model-specific dimensions
+    - Vector store dimension synchronization
+    - Unknown providers/models (warns but doesn't fail)
+    
+    Args:
+        config: Memory client configuration dictionary
+        
+    Returns:
+        Modified config dictionary with embedding_dims set
+    """
+    # Check if embedder config exists
+    if "embedder" not in config or not config["embedder"]:
+        return config
+    
+    embedder_provider = config["embedder"].get("provider")
+    embedder_config = config["embedder"].get("config", {})
+    embedder_model = embedder_config.get("model", "")
+    
+    # Provider-specific dimension defaults
+    provider_default_dims = {
+        "gemini": 1024,      # models/gemini-embedding-001
+        "openai": 1536,      # text-embedding-3-small (default)
+        "cohere": 1024,      # embed-english-v3.0
+        "ollama": None,      # Model-dependent, must be specified by user
+        "huggingface": None, # Model-dependent, must be specified by user
+    }
+    
+    # Model-specific dimension overrides (takes precedence over provider defaults)
+    model_dims_map = {
+        # Gemini models
+        "models/gemini-embedding-001": 1024,
+        
+        # OpenAI models
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        "text-embedding-ada-002": 1536,
+        
+        # Cohere models
+        "embed-english-v3.0": 1024,
+        "embed-multilingual-v3.0": 1024,
+        
+        # Common Ollama models (if user doesn't specify)
+        "nomic-embed-text": 768,
+        "mxbai-embed-large": 1024,
+    }
+    
+    # Determine expected dimensions (priority order)
+    expected_dims = None
+    
+    # 1. Check if explicitly set in config (user override)
+    if "embedding_dims" in embedder_config:
+        expected_dims = embedder_config["embedding_dims"]
+        print(f"[INFO] Using explicit embedding_dims={expected_dims} from config")
+    
+    # 2. Check model-specific mapping
+    elif embedder_model in model_dims_map:
+        expected_dims = model_dims_map[embedder_model]
+        print(f"[INFO] Using model-specific embedding_dims={expected_dims} for model '{embedder_model}'")
+    
+    # 3. Check provider defaults
+    elif embedder_provider in provider_default_dims:
+        provider_dim = provider_default_dims[embedder_provider]
+        if provider_dim is not None:
+            expected_dims = provider_dim
+            print(f"[INFO] Using provider default embedding_dims={expected_dims} for provider '{embedder_provider}'")
+        else:
+            # Ollama/HuggingFace - dimensions must be specified by user
+            print(f"[WARNING] Provider '{embedder_provider}' requires explicit embedding_dims. "
+                  f"Model '{embedder_model}' dimensions are model-dependent. "
+                  f"Please specify embedding_dims in config to avoid dimension mismatches.")
+            return config  # Don't modify config if we can't determine dimensions
+    
+    # 4. Unknown provider/model - warn but don't fail
+    else:
+        print(f"[WARNING] Unknown embedder provider '{embedder_provider}' or model '{embedder_model}'. "
+              f"Cannot determine embedding_dims automatically. "
+              f"Please specify embedding_dims in config to avoid dimension mismatches.")
+        return config  # Don't modify config if we can't determine dimensions
+    
+    # Set dimensions if missing or incorrect
+    if expected_dims is not None:
+        current_dims = embedder_config.get("embedding_dims")
+        
+        if current_dims != expected_dims:
+            embedder_config["embedding_dims"] = expected_dims
+            config["embedder"]["config"] = embedder_config
+            print(f"[INFO] Set embedding_dims={expected_dims} for {embedder_provider} embedder (model: {embedder_model})")
+            
+            # CRITICAL: Sync vector store dimensions with embedder dimensions
+            if "vector_store" in config and "config" in config["vector_store"]:
+                vector_store_config = config["vector_store"]["config"]
+                current_vs_dims = vector_store_config.get("embedding_model_dims")
+                
+                if current_vs_dims != expected_dims:
+                    vector_store_config["embedding_model_dims"] = expected_dims
+                    config["vector_store"]["config"] = vector_store_config
+                    print(f"[INFO] Synced vector store embedding_model_dims to {expected_dims} to match embedder")
+    
+    return config
+
+
 def _get_docker_host_url():
     """
     Determine the appropriate host URL to reach host machine from inside Docker container.
@@ -500,6 +608,10 @@ def get_memory_client(custom_instructions: str = None):
                         # Fix Ollama URLs for Docker if needed
                         if config["embedder"].get("provider") == "ollama":
                             config["embedder"] = _fix_ollama_urls(config["embedder"])
+                        
+                        # CRITICAL: Ensure embedding_dims is set for all embedder providers
+                        # This handles all edge cases: missing dims, different providers/models, vector store sync
+                        config = _ensure_embedding_dims(config)
 
                     if "vector_store" in mem0_config and mem0_config["vector_store"] is not None:
                         config["vector_store"] = mem0_config["vector_store"]
@@ -509,6 +621,8 @@ def get_memory_client(custom_instructions: str = None):
                         config["graph_store"] = mem0_config["graph_store"]
             else:
                 print("No configuration found in database, using defaults")
+                # Ensure default config has correct embedding_dims
+                config = _ensure_embedding_dims(config)
                     
             db.close()
                             
@@ -526,6 +640,10 @@ def get_memory_client(custom_instructions: str = None):
         # This ensures that even default config values like "env:OPENAI_API_KEY" get parsed
         print("Parsing environment variables in final config...")
         config = _parse_environment_variables(config)
+        
+        # CRITICAL: Ensure embedding_dims is set AFTER env var parsing
+        # This catches any cases where env vars might have changed the config
+        config = _ensure_embedding_dims(config)
 
         # Check if config has changed by comparing hashes
         current_config_hash = _get_config_hash(config)
