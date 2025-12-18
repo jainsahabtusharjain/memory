@@ -14,8 +14,8 @@ services:
       - NEO4J_USERNAME=neo4j
       - NEO4J_PASSWORD=mem0graph
       - DATABASE_URL=sqlite:///./openmemory.db
-      - GOOGLE_API_KEY=AIzaSyAuqV5Oe3HCOJezVywZUN2e0kRoLOK-4eY
-      - GEMINI_API_KEY=AIzaSyAuqV5Oe3HCOJezVywZUN2e0kRoLOK-4eY
+      - GOOGLE_API_KEY=
+      - GEMINI_API_KEY=
       - API_KEY
     command: sh -c "uvicorn main:app --host 0.0.0.0 --port 8765 --reload --workers 4"
     working_dir: /usr/src/openmemory
